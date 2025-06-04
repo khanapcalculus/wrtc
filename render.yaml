@@ -1,0 +1,27 @@
+services:
+  # Frontend (React App)
+  - type: web
+    name: wrtc-whiteboard
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./build
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+  # Backend (Signaling Server)
+  - type: web
+    name: wrtc-signaling-server
+    env: node
+    plan: free
+    buildCommand: cd server && npm install
+    startCommand: cd server && node signaling-server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000 
