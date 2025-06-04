@@ -12,14 +12,50 @@ class WebRTCManager {
     this.onDebugLog = null;
     this.connectionTimeout = null;
     
-    // WebRTC configuration with STUN servers
+    // WebRTC configuration with STUN and TURN servers
     this.config = {
       iceServers: [
+        // Google STUN servers
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' }
+        { urls: 'stun:stun2.l.google.com:19302' },
+        
+        // Metered TURN servers (free tier)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        
+        // Additional free TURN servers for redundancy
+        {
+          urls: 'turn:relay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:relay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:relay.metered.ca:443?transport=tcp',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
       ],
-      iceCandidatePoolSize: 10
+      iceCandidatePoolSize: 10,
+      iceTransportPolicy: 'all' // Use all available transports
     };
   }
 
@@ -96,7 +132,7 @@ class WebRTCManager {
 
     // Handle ICE candidates
     this.socket.on('webrtc-ice-candidate', async (data) => {
-      this.debugLog('🧊 Received ICE candidate');
+      this.debugLog(`🧊 Received ICE candidate: ${data.candidate.type} (${data.candidate.protocol})`);
       try {
         await this.handleIceCandidate(data.candidate);
       } catch (error) {
@@ -190,10 +226,12 @@ class WebRTCManager {
     // Handle ICE candidates
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        this.debugLog('🧊 Sending ICE candidate');
+        this.debugLog(`🧊 Sending ICE candidate: ${event.candidate.type} (${event.candidate.protocol})`);
         this.socket.emit('webrtc-ice-candidate', {
           candidate: event.candidate
         });
+      } else {
+        this.debugLog('🧊 ICE gathering complete');
       }
     };
 
@@ -221,6 +259,14 @@ class WebRTCManager {
     this.peerConnection.oniceconnectionstatechange = () => {
       const iceState = this.peerConnection.iceConnectionState;
       this.debugLog(`🧊 ICE connection state: ${iceState}`);
+      
+      if (iceState === 'connected' || iceState === 'completed') {
+        this.debugLog('🎉 ICE connection established!');
+      } else if (iceState === 'failed') {
+        this.debugLog('❌ ICE connection failed - trying to restart');
+        // Try ICE restart
+        this.peerConnection.restartIce();
+      }
     };
 
     // Monitor signaling state
@@ -229,14 +275,14 @@ class WebRTCManager {
       this.debugLog(`📡 Signaling state: ${signalingState}`);
     };
 
-    // Set connection timeout
+    // Set connection timeout (increased to 60 seconds)
     this.connectionTimeout = setTimeout(() => {
       if (this.peerConnection?.connectionState !== 'connected') {
-        this.debugLog('⏰ Connection timeout - cleaning up');
+        this.debugLog('⏰ Connection timeout (60s) - cleaning up');
         this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
         this.cleanup();
       }
-    }, 30000); // 30 second timeout
+    }, 60000); // 60 second timeout
   }
 
   setupDataChannel() {
