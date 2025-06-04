@@ -11,6 +11,7 @@ class WebRTCManager {
     this.onDataReceived = null;
     this.onDebugLog = null;
     this.connectionTimeout = null;
+    this.isUsingFallback = false; // Track if using Socket.IO fallback
     
     // WebRTC configuration with STUN and TURN servers
     this.config = {
@@ -184,6 +185,14 @@ class WebRTCManager {
         this.cleanup();
       }
     });
+
+    // Socket.IO fallback for data transmission
+    this.socket.on('fallback-data', (data) => {
+      this.debugLog('📡 Received data via Socket.IO fallback');
+      if (this.onDataReceived) {
+        this.onDataReceived(data);
+      }
+    });
   }
 
   // Join or create a room
@@ -296,9 +305,11 @@ class WebRTCManager {
     // Set connection timeout (increased to 60 seconds)
     this.connectionTimeout = setTimeout(() => {
       if (this.peerConnection?.connectionState !== 'connected') {
-        this.debugLog('⏰ Connection timeout (60s) - cleaning up');
+        this.debugLog('⏰ WebRTC connection timeout (60s) - enabling Socket.IO fallback');
         this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
-        this.cleanup();
+        
+        // Enable fallback mode instead of cleanup
+        this.enableSocketIOFallback();
       }
     }, 60000); // 60 second timeout
   }
@@ -370,14 +381,50 @@ class WebRTCManager {
 
   sendData(data) {
     if (this.dataChannel && this.dataChannel.readyState === 'open') {
+      // Use WebRTC data channel (preferred)
       this.dataChannel.send(JSON.stringify(data));
+      return true;
+    } else if (this.isUsingFallback && this.socket) {
+      // Use Socket.IO fallback
+      this.debugLog('📡 Sending data via Socket.IO fallback');
+      this.socket.emit('fallback-data', data);
       return true;
     }
     return false;
   }
 
   getConnectionState() {
+    if (this.isUsingFallback) {
+      return 'connected-fallback';
+    }
     return this.peerConnection?.connectionState || 'new';
+  }
+
+  enableSocketIOFallback() {
+    this.debugLog('🔄 Enabling Socket.IO fallback mode...');
+    this.isUsingFallback = true;
+    
+    // Clean up WebRTC connection but keep socket
+    if (this.connectionTimeout) {
+      clearTimeout(this.connectionTimeout);
+    }
+    
+    if (this.dataChannel) {
+      this.dataChannel.close();
+      this.dataChannel = null;
+    }
+    
+    if (this.peerConnection) {
+      this.peerConnection.close();
+      this.peerConnection = null;
+    }
+    
+    // Notify connection state change
+    if (this.onConnectionStateChange) {
+      this.onConnectionStateChange('connected-fallback');
+    }
+    
+    this.debugLog('✅ Socket.IO fallback enabled - whiteboard should work now!');
   }
 
   cleanup() {

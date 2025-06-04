@@ -119,6 +119,12 @@ io.on('connection', (socket) => {
     socket.to(socket.roomId).emit('webrtc-ice-candidate', data);
   });
   
+  // Handle Socket.IO fallback data (when WebRTC fails)
+  socket.on('fallback-data', (data) => {
+    console.log(`📡 Forwarding fallback data from ${socket.id} to room ${socket.roomId}`);
+    socket.to(socket.roomId).emit('fallback-data', data);
+  });
+  
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`❌ User disconnected: ${socket.id}`);
