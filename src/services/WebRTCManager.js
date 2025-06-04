@@ -1,7 +1,7 @@
 import { io } from 'socket.io-client';
 
 class WebRTCManager {
-  constructor() {
+  constructor(options = {}) {
     this.peerConnection = null;
     this.dataChannel = null;
     this.socket = null;
@@ -13,68 +13,141 @@ class WebRTCManager {
     this.connectionTimeout = null;
     this.isUsingFallback = false; // Track if using Socket.IO fallback
     
-    // WebRTC configuration with STUN and TURN servers
-    this.config = {
-      iceServers: [
-        // Google STUN servers
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        
-        // Metered TURN servers (free tier)
+    // Configuration options
+    this.enableFallback = options.enableFallback !== false; // Default: true
+    this.fastModeOnly = options.fastModeOnly === true; // Default: false
+    this.batchFallbackData = options.batchFallbackData === true; // Default: false
+    this.fallbackBatchSize = options.fallbackBatchSize || 5; // Batch multiple operations
+    this.fallbackBatch = []; // Store batched operations
+    
+    // Enterprise analytics
+    this.analytics = {
+      connectionAttempts: 0,
+      webrtcSuccessful: 0,
+      fallbackUsed: 0,
+      connectionTime: null,
+      startTime: null,
+      iceGatheringTime: null,
+      selectedCandidateTypes: []
+    };
+    
+    // Enterprise-grade WebRTC configuration
+    this.config = this.buildEnterpriseICEConfig();
+  }
+
+  // Build enterprise-grade ICE configuration
+  buildEnterpriseICEConfig() {
+    // Detect user's approximate location for optimal TURN server selection
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const isAsian = timezone.includes('Asia') || timezone.includes('Tokyo') || timezone.includes('Shanghai');
+    const isEuropean = timezone.includes('Europe') || timezone.includes('London') || timezone.includes('Berlin');
+    const isAmerican = timezone.includes('America') || timezone.includes('New_York') || timezone.includes('Los_Angeles');
+
+    this.debugLog(`🌍 Detected timezone: ${timezone}`);
+    this.debugLog(`📍 Geographic optimization: ${isAsian ? 'Asia' : isEuropean ? 'Europe' : isAmerican ? 'Americas' : 'Global'}`);
+
+    const iceServers = [
+      // Multiple STUN servers for redundancy
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun3.l.google.com:19302' },
+      { urls: 'stun:stun4.l.google.com:19302' }
+    ];
+
+    // Add region-optimized TURN servers
+    if (isAsian) {
+      // Asia-Pacific optimized TURN servers
+      iceServers.push(
         {
-          urls: 'turn:openrelay.metered.ca:80',
+          urls: 'turn:turn-ap-southeast-1.metered.ca:80',
           username: 'openrelayproject',
           credential: 'openrelayproject'
         },
         {
-          urls: 'turn:openrelay.metered.ca:443',
+          urls: 'turn:turn-ap-southeast-1.metered.ca:443',
           username: 'openrelayproject',
           credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        
-        // Additional free TURN servers for redundancy
-        {
-          urls: 'turn:relay.metered.ca:80',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:relay.metered.ca:443',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        {
-          urls: 'turn:relay.metered.ca:443?transport=tcp',
-          username: 'openrelayproject',
-          credential: 'openrelayproject'
-        },
-        
-        // Alternative TURN servers for restrictive networks
-        {
-          urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-          username: 'webrtc',
-          credential: 'webrtc'
-        },
-        {
-          urls: 'turn:numb.viagenie.ca:3478',
-          username: 'webrtc@live.com',
-          credential: 'muazkh'
-        },
-        {
-          urls: 'turn:numb.viagenie.ca:443?transport=tcp',
-          username: 'webrtc@live.com', 
-          credential: 'muazkh'
         }
-      ],
-      iceCandidatePoolSize: 10,
-      iceTransportPolicy: 'all', // Use all available transports
-      bundlePolicy: 'balanced' // Optimize for connectivity
+      );
+    } else if (isEuropean) {
+      // Europe optimized TURN servers
+      iceServers.push(
+        {
+          urls: 'turn:turn-eu-west-1.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:turn-eu-west-1.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      );
+    } else {
+      // Americas/Global optimized TURN servers
+      iceServers.push(
+        {
+          urls: 'turn:turn-us-east-1.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:turn-us-east-1.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      );
+    }
+
+    // Add global backup TURN servers (multiple providers for enterprise reliability)
+    iceServers.push(
+      // Metered.ca (Primary)
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      
+      // Backup providers for enterprise redundancy
+      {
+        urls: 'turn:numb.viagenie.ca:3478',
+        username: 'webrtc@live.com',
+        credential: 'muazkh'
+      },
+      {
+        urls: 'turn:numb.viagenie.ca:443?transport=tcp',
+        username: 'webrtc@live.com',
+        credential: 'muazkh'
+      },
+      
+      // High-compatibility servers for restrictive networks
+      {
+        urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+        username: 'webrtc',
+        credential: 'webrtc'
+      }
+    );
+
+    return {
+      iceServers: iceServers,
+      iceCandidatePoolSize: 15, // Increased for enterprise
+      iceTransportPolicy: 'all',
+      bundlePolicy: 'balanced',
+      rtcpMuxPolicy: 'require',
+      // Enterprise optimizations
+      iceConnectionReceivingTimeout: 4000,
+      iceBackupCandidatePairPingInterval: 25000
     };
   }
 
@@ -231,6 +304,8 @@ class WebRTCManager {
 
   initializePeerConnection() {
     this.debugLog('🔄 Initializing peer connection...');
+    this.analytics.connectionAttempts++;
+    this.analytics.startTime = Date.now();
     
     this.peerConnection = new RTCPeerConnection(this.config);
 
@@ -272,7 +347,11 @@ class WebRTCManager {
       }
 
       if (state === 'connected') {
-        this.debugLog('🎉 WebRTC connection established!');
+        this.analytics.webrtcSuccessful++;
+        this.analytics.connectionTime = Date.now() - this.analytics.startTime;
+        this.debugLog(`🎉 WebRTC connection established in ${this.analytics.connectionTime}ms!`);
+        this.debugLog(`📊 Analytics: ${this.analytics.webrtcSuccessful}/${this.analytics.connectionAttempts} WebRTC success rate`);
+        
         if (this.connectionTimeout) {
           clearTimeout(this.connectionTimeout);
         }
@@ -305,11 +384,17 @@ class WebRTCManager {
     // Set connection timeout (increased to 60 seconds)
     this.connectionTimeout = setTimeout(() => {
       if (this.peerConnection?.connectionState !== 'connected') {
-        this.debugLog('⏰ WebRTC connection timeout (60s) - enabling Socket.IO fallback');
-        this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
-        
-        // Enable fallback mode instead of cleanup
-        this.enableSocketIOFallback();
+        if (this.enableFallback && !this.fastModeOnly) {
+          this.debugLog('⏰ WebRTC connection timeout (60s) - enabling Socket.IO fallback');
+          this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
+          
+          // Enable fallback mode instead of cleanup
+          this.enableSocketIOFallback();
+        } else {
+          this.debugLog('⏰ WebRTC connection timeout (60s) - fast mode only, cleaning up');
+          this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
+          this.cleanup();
+        }
       }
     }, 60000); // 60 second timeout
   }
@@ -403,6 +488,7 @@ class WebRTCManager {
   enableSocketIOFallback() {
     this.debugLog('🔄 Enabling Socket.IO fallback mode...');
     this.isUsingFallback = true;
+    this.analytics.fallbackUsed++;
     
     // Clean up WebRTC connection but keep socket
     if (this.connectionTimeout) {
@@ -425,6 +511,7 @@ class WebRTCManager {
     }
     
     this.debugLog('✅ Socket.IO fallback enabled - whiteboard should work now!');
+    this.debugLog(`📊 Analytics: ${this.analytics.fallbackUsed} fallback connections used`);
   }
 
   cleanup() {
@@ -458,6 +545,20 @@ class WebRTCManager {
     if (this.onDebugLog) {
       this.onDebugLog(message);
     }
+  }
+
+  // Get enterprise analytics for monitoring
+  getAnalytics() {
+    const successRate = this.analytics.connectionAttempts > 0 
+      ? (this.analytics.webrtcSuccessful / this.analytics.connectionAttempts * 100).toFixed(1)
+      : 0;
+    
+    return {
+      ...this.analytics,
+      webrtcSuccessRate: `${successRate}%`,
+      averageConnectionTime: this.analytics.connectionTime || 'N/A',
+      currentConnectionType: this.isUsingFallback ? 'Socket.IO Fallback' : 'WebRTC Direct'
+    };
   }
 }
 
