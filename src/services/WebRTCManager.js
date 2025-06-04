@@ -52,10 +52,28 @@ class WebRTCManager {
           urls: 'turn:relay.metered.ca:443?transport=tcp',
           username: 'openrelayproject',
           credential: 'openrelayproject'
+        },
+        
+        // Alternative TURN servers for restrictive networks
+        {
+          urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+          username: 'webrtc',
+          credential: 'webrtc'
+        },
+        {
+          urls: 'turn:numb.viagenie.ca:3478',
+          username: 'webrtc@live.com',
+          credential: 'muazkh'
+        },
+        {
+          urls: 'turn:numb.viagenie.ca:443?transport=tcp',
+          username: 'webrtc@live.com', 
+          credential: 'muazkh'
         }
       ],
       iceCandidatePoolSize: 10,
-      iceTransportPolicy: 'all' // Use all available transports
+      iceTransportPolicy: 'all', // Use all available transports
+      bundlePolicy: 'balanced' // Optimize for connectivity
     };
   }
 
