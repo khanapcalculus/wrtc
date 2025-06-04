@@ -73,6 +73,37 @@ class WebRTCManager {
         credential: 'openrelayproject'
       },
       
+      // Free public Coturn servers
+      {
+        urls: 'turn:freestun.net:3478',
+        username: 'free',
+        credential: 'free'
+      },
+      {
+        urls: 'turn:freestun.net:5349?transport=tcp',
+        username: 'free',
+        credential: 'free'
+      },
+      
+      // Educational/Research TURN servers
+      {
+        urls: 'turn:turn.bistri.com:80',
+        username: 'homeo',
+        credential: 'homeo'
+      },
+      {
+        urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
+        username: 'webrtc',
+        credential: 'webrtc'
+      },
+      
+      // Additional public servers
+      {
+        urls: 'turn:stun.counterpath.net:3478',
+        username: 'altanai',
+        credential: 'altanai'
+      },
+      
       // Backup reliable servers
       {
         urls: 'turn:relay.metered.ca:80',
@@ -149,10 +180,29 @@ class WebRTCManager {
         username: 'webrtc@live.com',
         credential: 'muazkh'
       },
+      
+      // More free public servers
       {
-        urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
-        username: 'webrtc',
-        credential: 'webrtc'
+        urls: 'turn:global.turn.twilio.com:3478?transport=udp',
+        username: 'dc2d2894d5a61a808c1d79ced0c37ad1b3b5f5c371b6849b84ac9c7e92f69a5a',
+        credential: 'tE2DajzSJwnsSbc123='
+      },
+      {
+        urls: 'turn:global.turn.twilio.com:443?transport=tcp',
+        username: 'dc2d2894d5a61a808c1d79ced0c37ad1b3b5f5c371b6849b84ac9c7e92f69a5a',
+        credential: 'tE2DajzSJwnsSbc123='
+      },
+      
+      // Open source community servers
+      {
+        urls: 'turn:openrelay.metered.ca:80?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=udp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
       }
     ];
 
