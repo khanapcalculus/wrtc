@@ -11,20 +11,17 @@ class WebRTCManager {
     this.onDataReceived = null;
     this.onDebugLog = null;
     this.connectionTimeout = null;
-    this.isUsingFallback = false; // Track if using Socket.IO fallback
     
-    // Configuration options
-    this.enableFallback = options.enableFallback !== false; // Default: true
-    this.fastModeOnly = options.fastModeOnly === true; // Default: false
-    this.batchFallbackData = options.batchFallbackData === true; // Default: false
-    this.fallbackBatchSize = options.fallbackBatchSize || 5; // Batch multiple operations
-    this.fallbackBatch = []; // Store batched operations
+    // Configuration options - WebRTC only
+    this.maxRetryAttempts = options.maxRetryAttempts || 3;
+    this.retryDelay = options.retryDelay || 5000; // 5 seconds between retries
+    this.currentRetryAttempt = 0;
     
     // Enterprise analytics
     this.analytics = {
       connectionAttempts: 0,
       webrtcSuccessful: 0,
-      fallbackUsed: 0,
+      retryAttempts: 0,
       connectionTime: null,
       startTime: null,
       iceGatheringTime: null,
@@ -46,8 +43,8 @@ class WebRTCManager {
     this.debugLog(`🌍 Detected timezone: ${timezone}`);
     this.debugLog(`📍 Geographic optimization: ${isAsian ? 'Asia' : isEuropean ? 'Europe' : isAmerican ? 'Americas' : 'Global'}`);
 
+    // Multiple STUN servers for redundancy
     const iceServers = [
-      // Multiple STUN servers for redundancy
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
       { urls: 'stun:stun2.l.google.com:19302' },
@@ -55,10 +52,49 @@ class WebRTCManager {
       { urls: 'stun:stun4.l.google.com:19302' }
     ];
 
-    // Add region-optimized TURN servers
+    this.debugLog('🔧 Configuring STUN servers: 5 Google STUN servers');
+
+    // Add the most reliable free TURN servers first (tested and working)
+    const reliableTurnServers = [
+      // Metered.ca - Most reliable free provider
+      {
+        urls: 'turn:openrelay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443',
+        username: 'openrelayproject', 
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      
+      // Backup reliable servers
+      {
+        urls: 'turn:relay.metered.ca:80',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:relay.metered.ca:443',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      },
+      {
+        urls: 'turn:relay.metered.ca:443?transport=tcp',
+        username: 'openrelayproject',
+        credential: 'openrelayproject'
+      }
+    ];
+
+    // Add region-specific servers for better performance
+    const regionalTurnServers = [];
     if (isAsian) {
-      // Asia-Pacific optimized TURN servers
-      iceServers.push(
+      regionalTurnServers.push(
         {
           urls: 'turn:turn-ap-southeast-1.metered.ca:80',
           username: 'openrelayproject',
@@ -70,9 +106,9 @@ class WebRTCManager {
           credential: 'openrelayproject'
         }
       );
+      this.debugLog('🌏 Added Asia-Pacific TURN servers');
     } else if (isEuropean) {
-      // Europe optimized TURN servers
-      iceServers.push(
+      regionalTurnServers.push(
         {
           urls: 'turn:turn-eu-west-1.metered.ca:80',
           username: 'openrelayproject',
@@ -84,9 +120,9 @@ class WebRTCManager {
           credential: 'openrelayproject'
         }
       );
+      this.debugLog('🇪🇺 Added European TURN servers');
     } else {
-      // Americas/Global optimized TURN servers
-      iceServers.push(
+      regionalTurnServers.push(
         {
           urls: 'turn:turn-us-east-1.metered.ca:80',
           username: 'openrelayproject',
@@ -98,28 +134,11 @@ class WebRTCManager {
           credential: 'openrelayproject'
         }
       );
+      this.debugLog('🇺🇸 Added Americas TURN servers');
     }
 
-    // Add global backup TURN servers (multiple providers for enterprise reliability)
-    iceServers.push(
-      // Metered.ca (Primary)
-      {
-        urls: 'turn:openrelay.metered.ca:80',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      {
-        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-        username: 'openrelayproject',
-        credential: 'openrelayproject'
-      },
-      
-      // Backup providers for enterprise redundancy
+    // Add additional backup TURN servers
+    const backupTurnServers = [
       {
         urls: 'turn:numb.viagenie.ca:3478',
         username: 'webrtc@live.com',
@@ -130,24 +149,29 @@ class WebRTCManager {
         username: 'webrtc@live.com',
         credential: 'muazkh'
       },
-      
-      // High-compatibility servers for restrictive networks
       {
         urls: 'turn:turn.anyfirewall.com:443?transport=tcp',
         username: 'webrtc',
         credential: 'webrtc'
       }
-    );
+    ];
+
+    // Combine all servers: Regional first (best latency), then reliable, then backup
+    const allTurnServers = [...regionalTurnServers, ...reliableTurnServers, ...backupTurnServers];
+    iceServers.push(...allTurnServers);
+
+    this.debugLog(`🔧 Total ICE servers: ${iceServers.length} (${allTurnServers.length} TURN servers)`);
 
     return {
       iceServers: iceServers,
-      iceCandidatePoolSize: 15, // Increased for enterprise
+      iceCandidatePoolSize: 20, // Increased for better connectivity
       iceTransportPolicy: 'all',
-      bundlePolicy: 'balanced',
+      bundlePolicy: 'max-bundle', // Optimize for connectivity
       rtcpMuxPolicy: 'require',
-      // Enterprise optimizations
-      iceConnectionReceivingTimeout: 4000,
-      iceBackupCandidatePairPingInterval: 25000
+      // Optimizations for free tier reliability
+      iceConnectionReceivingTimeout: 6000, // Longer timeout
+      iceBackupCandidatePairPingInterval: 30000,
+      enableDtlsSrtp: true
     };
   }
 
@@ -176,7 +200,12 @@ class WebRTCManager {
       timeout: 20000,
       forceNew: true,
       upgrade: true,
-      rememberUpgrade: false
+      rememberUpgrade: false,
+      // Enhanced stability for fallback mode
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionAttempts: 5,
+      maxReconnectionAttempts: 10
     });
 
     this.socket.on('connect', () => {
@@ -224,7 +253,13 @@ class WebRTCManager {
 
     // Handle ICE candidates
     this.socket.on('webrtc-ice-candidate', async (data) => {
-      this.debugLog(`🧊 Received ICE candidate: ${data.candidate.type} (${data.candidate.protocol})`);
+      const candidate = data.candidate;
+      const candidateType = candidate?.candidate?.includes('typ relay') ? 'relay' :
+                           candidate?.candidate?.includes('typ srflx') ? 'srflx' :
+                           candidate?.candidate?.includes('typ host') ? 'host' : 'unknown';
+      const protocol = candidate?.protocol || 'unknown';
+      
+      this.debugLog(`🧊 Received ICE candidate: ${candidateType} (${protocol})`);
       try {
         await this.handleIceCandidate(data.candidate);
       } catch (error) {
@@ -256,14 +291,6 @@ class WebRTCManager {
       this.debugLog(`👋 User left room (${data.participantCount} remaining)`);
       if (data.participantCount === 0) {
         this.cleanup();
-      }
-    });
-
-    // Socket.IO fallback for data transmission
-    this.socket.on('fallback-data', (data) => {
-      this.debugLog('📡 Received data via Socket.IO fallback');
-      if (this.onDataReceived) {
-        this.onDataReceived(data);
       }
     });
   }
@@ -328,12 +355,31 @@ class WebRTCManager {
     // Handle ICE candidates
     this.peerConnection.onicecandidate = (event) => {
       if (event.candidate) {
-        this.debugLog(`🧊 Sending ICE candidate: ${event.candidate.type} (${event.candidate.protocol})`);
+        const candidate = event.candidate;
+        const candidateType = candidate.candidate.includes('typ relay') ? 'relay' :
+                             candidate.candidate.includes('typ srflx') ? 'srflx' :
+                             candidate.candidate.includes('typ host') ? 'host' : 'unknown';
+        const protocol = candidate.protocol || 'unknown';
+        
+        this.debugLog(`🧊 Sending ICE candidate: ${candidateType} (${protocol})`);
+        
+        // Track relay candidates for analytics
+        if (candidateType === 'relay') {
+          this.analytics.selectedCandidateTypes.push('relay');
+          this.debugLog('🎯 TURN server working - relay candidate available!');
+        }
+        
         this.socket.emit('webrtc-ice-candidate', {
           candidate: event.candidate
         });
       } else {
         this.debugLog('🧊 ICE gathering complete');
+        
+        // Check if we got any relay candidates
+        const hasRelay = this.analytics.selectedCandidateTypes.includes('relay');
+        if (!hasRelay) {
+          this.debugLog('⚠️ No TURN relay candidates found - may have connectivity issues');
+        }
       }
     };
 
@@ -355,9 +401,12 @@ class WebRTCManager {
         if (this.connectionTimeout) {
           clearTimeout(this.connectionTimeout);
         }
-      } else if (state === 'failed' || state === 'disconnected') {
-        this.debugLog('❌ Connection failed or disconnected');
-        this.cleanup();
+      } else if (state === 'failed') {
+        this.debugLog('❌ WebRTC connection failed - attempting retry');
+        this.attemptRetry();
+      } else if (state === 'disconnected') {
+        this.debugLog('⚠️ WebRTC connection disconnected - attempting reconnection');
+        this.attemptReconnection();
       }
     };
 
@@ -384,17 +433,9 @@ class WebRTCManager {
     // Set connection timeout (increased to 60 seconds)
     this.connectionTimeout = setTimeout(() => {
       if (this.peerConnection?.connectionState !== 'connected') {
-        if (this.enableFallback && !this.fastModeOnly) {
-          this.debugLog('⏰ WebRTC connection timeout (60s) - enabling Socket.IO fallback');
-          this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
-          
-          // Enable fallback mode instead of cleanup
-          this.enableSocketIOFallback();
-        } else {
-          this.debugLog('⏰ WebRTC connection timeout (60s) - fast mode only, cleaning up');
-          this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
-          this.cleanup();
-        }
+        this.debugLog('⏰ WebRTC connection timeout (60s) - attempting retry');
+        this.debugLog(`🔍 Final states - Connection: ${this.peerConnection?.connectionState}, ICE: ${this.peerConnection?.iceConnectionState}, Signaling: ${this.peerConnection?.signalingState}`);
+        this.attemptRetry();
       }
     }, 60000); // 60 second timeout
   }
@@ -469,53 +510,19 @@ class WebRTCManager {
       // Use WebRTC data channel (preferred)
       this.dataChannel.send(JSON.stringify(data));
       return true;
-    } else if (this.isUsingFallback && this.socket) {
-      // Use Socket.IO fallback
-      this.debugLog('📡 Sending data via Socket.IO fallback');
-      this.socket.emit('fallback-data', data);
-      return true;
     }
     return false;
   }
 
   getConnectionState() {
-    if (this.isUsingFallback) {
-      return 'connected-fallback';
-    }
     return this.peerConnection?.connectionState || 'new';
-  }
-
-  enableSocketIOFallback() {
-    this.debugLog('🔄 Enabling Socket.IO fallback mode...');
-    this.isUsingFallback = true;
-    this.analytics.fallbackUsed++;
-    
-    // Clean up WebRTC connection but keep socket
-    if (this.connectionTimeout) {
-      clearTimeout(this.connectionTimeout);
-    }
-    
-    if (this.dataChannel) {
-      this.dataChannel.close();
-      this.dataChannel = null;
-    }
-    
-    if (this.peerConnection) {
-      this.peerConnection.close();
-      this.peerConnection = null;
-    }
-    
-    // Notify connection state change
-    if (this.onConnectionStateChange) {
-      this.onConnectionStateChange('connected-fallback');
-    }
-    
-    this.debugLog('✅ Socket.IO fallback enabled - whiteboard should work now!');
-    this.debugLog(`📊 Analytics: ${this.analytics.fallbackUsed} fallback connections used`);
   }
 
   cleanup() {
     this.debugLog('🧹 Cleaning up WebRTC connection...');
+    
+    // Reset retry counter
+    this.currentRetryAttempt = 0;
     
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
@@ -557,8 +564,74 @@ class WebRTCManager {
       ...this.analytics,
       webrtcSuccessRate: `${successRate}%`,
       averageConnectionTime: this.analytics.connectionTime || 'N/A',
-      currentConnectionType: this.isUsingFallback ? 'Socket.IO Fallback' : 'WebRTC Direct'
+      currentConnectionType: 'WebRTC Direct'
     };
+  }
+
+  // WebRTC retry logic
+  attemptRetry() {
+    if (this.currentRetryAttempt < this.maxRetryAttempts) {
+      this.currentRetryAttempt++;
+      this.analytics.retryAttempts++;
+      
+      this.debugLog(`🔄 Retry attempt ${this.currentRetryAttempt}/${this.maxRetryAttempts} in ${this.retryDelay/1000}s...`);
+      
+      // Clean up current connection
+      if (this.peerConnection) {
+        this.peerConnection.close();
+        this.peerConnection = null;
+      }
+      
+      if (this.dataChannel) {
+        this.dataChannel.close();
+        this.dataChannel = null;
+      }
+      
+      // Wait and retry
+      setTimeout(() => {
+        this.debugLog(`🚀 Retrying WebRTC connection (attempt ${this.currentRetryAttempt})`);
+        this.initializePeerConnection();
+        
+        // If host, create new offer
+        if (this.isHost) {
+          setTimeout(() => {
+            if (this.peerConnection && this.peerConnection.signalingState === 'stable') {
+              this.createOffer();
+            }
+          }, 1000);
+        }
+      }, this.retryDelay);
+    } else {
+      this.debugLog(`❌ Max retry attempts (${this.maxRetryAttempts}) reached. Connection failed.`);
+      this.debugLog(`📊 Final analytics: ${this.analytics.webrtcSuccessful}/${this.analytics.connectionAttempts} success, ${this.analytics.retryAttempts} retries`);
+      this.cleanup();
+    }
+  }
+
+  // WebRTC reconnection logic
+  attemptReconnection() {
+    this.debugLog('🔄 Attempting to reconnect WebRTC...');
+    
+    // Try ICE restart first
+    if (this.peerConnection && this.peerConnection.connectionState !== 'closed') {
+      try {
+        this.peerConnection.restartIce();
+        this.debugLog('🧊 ICE restart initiated');
+        
+        // Wait for reconnection, then retry if still failed
+        setTimeout(() => {
+          if (this.peerConnection?.connectionState !== 'connected') {
+            this.debugLog('⚠️ ICE restart failed, attempting full retry');
+            this.attemptRetry();
+          }
+        }, 10000); // 10 seconds for ICE restart
+      } catch (error) {
+        this.debugLog(`❌ ICE restart failed: ${error.message}`);
+        this.attemptRetry();
+      }
+    } else {
+      this.attemptRetry();
+    }
   }
 }
 
